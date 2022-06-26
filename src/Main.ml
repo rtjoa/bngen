@@ -152,6 +152,37 @@ let rec sym_string_of_expr (e:expr) : string =
   | Int(v, sz) -> Format.sprintf "int(%d, %d)" sz v
   | _ -> failwith "unidentified"
 
+let rec jl_string_of_expr (e:expr) : string =
+  match e with
+  | True -> "true"
+  | False -> "false"
+  | Ident(s) -> s
+  | Flip(f) ->
+    failwith " no flips "
+  | Not(Ident(s)) -> Format.sprintf "! (%s)" s
+  | And(e1, e2) -> Format.sprintf "(%s & %s)" (jl_string_of_expr e1) (jl_string_of_expr e2)
+  | Or(e1, e2) -> Format.sprintf "(%s | %s)" (jl_string_of_expr e1) (jl_string_of_expr e2)
+  | Ite(g, t, e) -> Format.sprintf "ifelse(%s, %s, %s)" (jl_string_of_expr g)
+                      (jl_string_of_expr t) (jl_string_of_expr e)
+  | Category(l) ->
+    let res = List.foldi l ~init:(Format.sprintf "discrete_int([") ~f:(fun idx acc i ->
+        if idx = 0 then
+          Format.sprintf "%s%f" acc i
+        else
+          Format.sprintf "%s,%f" acc i
+      ) in
+    Format.sprintf "%s])" res
+  | Tuple(e1, e2) ->
+    let s1 = jl_string_of_expr e1 in
+    let s2 = jl_string_of_expr e2 in
+    Format.sprintf "(%s,%s)" s1 s2
+  | Eq(e1, e2) ->
+    let s1 = jl_string_of_expr e1 in
+    let s2 = jl_string_of_expr e2 in
+    Format.sprintf "prob_equals(%s, %s)" s1 s2
+  | Int(v, sz) -> Format.sprintf "DistInt(%d)" v
+  | _ -> failwith "unidentified"
+
 let rec simppl_string_of_stmt (s:stmt) : string = match s with
   | Skip -> "observe true"
   | SFlip(s, p) -> Format.sprintf "%s ~ flip %f" s p
@@ -266,6 +297,27 @@ let print_sym fname =
   (* let (last_id, _, _) = List.last_exn p in *)
   Format.printf "%s"  (sym_string_of_expr tuple);
   ()
+ 
+let print_jl fname =
+  let f = open_in fname in
+  let network = Bn.load_bif f in
+  let p = List.map (Array.to_list network.topo_vars) ~f:(fun var ->
+              var_assgn network var
+    ) in
+  Format.printf "using Dice\nusing Dice: ifelse\n\n";
+  List.iter p ~f:(fun (ident, typ, body) ->
+      Format.printf "%s = %s\n" ident (jl_string_of_expr body)
+    );
+  let (id, typ, body)::xs = p in
+  let tuple : expr = List.fold xs ~init:(Ident(id)) ~f:(fun acc (id, typ, _) ->
+      match typ with
+      | TCategory(sz) -> Tuple(Ident(id), acc)
+      | TBool -> Or(Ident(id), acc)
+    ) in
+  (* print tuple of results *)
+  (* let (last_id, _, _) = List.last_exn p in *)
+  Format.printf "res = infer(%s)"  (jl_string_of_expr tuple);
+  ()
 
 (* parse bif *)
 let () =
@@ -275,4 +327,5 @@ let () =
     "psi" -> print_psi fname
   | "sym" -> print_sym fname
   | "simppl" -> print_simppl fname
+  | "jl" -> print_jl fname
   | _ -> failwith "uncrecognized arg type"
